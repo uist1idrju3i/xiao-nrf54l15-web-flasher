@@ -4,6 +4,10 @@
 
 A browser-based factory reset and recovery tool for Seeed XIAO nRF54L15. Using WebUSB and CMSIS-DAP, you can recover devices and flash firmware directly from your browser without any installation.
 
+## Disclaimer
+
+This is an **unofficial tool** and is not affiliated with, endorsed by, or supported by Seeed Studio, Nordic Semiconductor, or OpenBlink.org. This tool is provided "AS IS" without warranty of any kind. Use of this tool is entirely **at your own risk**. The author(s) are not responsible for any damage to your device, data loss, or any other issues that may arise from using this tool.
+
 ## Features
 
 - **Recover Only**: Performs a mass erase via CTRL-AP to unlock protected devices
