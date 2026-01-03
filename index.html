@@ -783,59 +783,9 @@
             };
         }
         
-        // Custom memory write function that works around DAP.js transfer() bug
-        // The bug: DAP.js transfer() with array of operations always tries to read
-        // operations.length * 4 bytes from response, even for WRITE operations which
-        // don't return data words. This causes "Offset is outside the bounds of DataView".
-        // Workaround: Add a harmless DP READ (DPIDR) to each batch of writes so the
-        // response contains at least one data word.
-        async function safeWriteMem32(dap, address, value) {
-            // Access the underlying proxy (CmsisDAP) for low-level transfers
-            let proxy = null;
-            const propNames = Object.getOwnPropertyNames(dap);
-            for (const name of propNames) {
-                const prop = dap[name];
-                if (prop && typeof prop === 'object' && typeof prop.transfer === 'function') {
-                    proxy = prop;
-                    break;
-                }
-            }
-            
-            if (!proxy) {
-                throw new Error('Could not find proxy object in ADI instance');
-            }
-            
-            // MEM-AP registers (AP #0)
-            const AP_CSW = 0x00;  // Control/Status Word
-            const AP_TAR = 0x04;  // Transfer Address Register
-            const AP_DRW = 0x0C;  // Data Read/Write
-            const DP_DPIDR = 0x00; // DP Identification Register (for dummy read)
-            
-            // CSW value for 32-bit access with auto-increment disabled
-            const CSW_VALUE = 0x23000052; // SIZE=32bit, AddrInc=OFF, DbgSwEnable, Prot
-            
-            // Select MEM-AP (AP #0) bank 0 for CSW/TAR/DRW
-            const selectValue = 0x00000000; // APSEL=0, APBANKSEL=0
-            
-            // Batch all operations together with a final DP read to avoid DataView bug
-            // The DP read ensures the response contains at least one data word
-            await proxy.transfer([
-                // 1. Write DP.SELECT to select MEM-AP bank 0
-                { port: DAP_PORT_DEBUG, mode: DAP_TRANSFER_WRITE, register: DP_REG_SELECT, value: selectValue },
-                // 2. Write CSW for 32-bit access
-                { port: DAP_PORT_ACCESS, mode: DAP_TRANSFER_WRITE, register: AP_CSW, value: CSW_VALUE },
-                // 3. Write TAR with target address
-                { port: DAP_PORT_ACCESS, mode: DAP_TRANSFER_WRITE, register: AP_TAR, value: address },
-                // 4. Write DRW with data value
-                { port: DAP_PORT_ACCESS, mode: DAP_TRANSFER_WRITE, register: AP_DRW, value: value },
-                // 5. CRITICAL: Add a DP read to make response contain data words
-                // This works around the DAP.js bug where it tries to read N*4 bytes
-                // from response even for WRITE operations
-                { port: DAP_PORT_DEBUG, mode: DAP_TRANSFER_READ, register: DP_DPIDR }
-            ]);
-        }
-        
-        // Flash firmware to device
+        // Flash firmware to device using DAP.js writeBlock API
+        // This uses transferBlock internally which properly handles writes
+        // without the DataView bug that affects transfer() with mixed operations
         async function flashFirmware(dap, firmwareData, startAddress) {
             log(`Flashing ${firmwareData.length} bytes starting at 0x${startAddress.toString(16)}...`, 'info');
             
@@ -845,36 +795,41 @@
             paddedData.fill(0xFF); // Fill with 0xFF (erased flash value)
             paddedData.set(firmwareData);
             
-            // Create DataView for reading 32-bit words (little-endian)
-            const dataView = new DataView(paddedData.buffer);
-            const totalWords = paddedSize / 4;
+            // Convert to Uint32Array for writeBlock
+            const words = new Uint32Array(paddedData.buffer);
+            const totalWords = words.length;
             
-            // Use safeWriteMem32 which works around DAP.js transfer() bug
-            // by adding a DP read to each batch of writes
-            log(`Writing ${totalWords} words using safe memory write...`, 'info');
+            log(`Writing ${totalWords} words using writeBlock...`, 'info');
             
-            for (let i = 0; i < totalWords; i++) {
-                const address = startAddress + (i * 4);
-                const word = dataView.getUint32(i * 4, true); // little-endian
+            // Write in chunks to show progress and avoid timeout
+            // writeBlock handles TAR auto-increment boundaries internally
+            const CHUNK_SIZE = 256; // words per chunk (1KB)
+            let wordsWritten = 0;
+            
+            while (wordsWritten < totalWords) {
+                const remainingWords = totalWords - wordsWritten;
+                const chunkWords = Math.min(CHUNK_SIZE, remainingWords);
+                const chunkData = words.slice(wordsWritten, wordsWritten + chunkWords);
+                const chunkAddress = startAddress + (wordsWritten * 4);
                 
                 try {
-                    await safeWriteMem32(dap, address, word);
+                    await dap.writeBlock(chunkAddress, chunkData);
                 } catch (error) {
-                    log(`Error writing word at 0x${address.toString(16)}: ${error.message}`, 'error');
+                    log(`Error writing chunk at 0x${chunkAddress.toString(16)}: ${error.message}`, 'error');
                     throw error;
                 }
                 
-                // Update progress every 100 words or at the end
-                if ((i + 1) % 100 === 0 || i === totalWords - 1) {
-                    const bytesWritten = (i + 1) * 4;
-                    const progress = 80 + (bytesWritten / paddedSize) * 15;
-                    updateProgress(progress, `Flashing: ${Math.round(bytesWritten / paddedSize * 100)}%`);
-                }
+                wordsWritten += chunkWords;
                 
-                // Log progress every 1000 words
-                if ((i + 1) % 1000 === 0 || i === totalWords - 1) {
-                    const bytesWritten = Math.min((i + 1) * 4, firmwareData.length);
-                    log(`Flashed ${bytesWritten} / ${firmwareData.length} bytes`, 'info');
+                // Update progress
+                const bytesWritten = wordsWritten * 4;
+                const progress = 80 + (bytesWritten / paddedSize) * 15;
+                updateProgress(progress, `Flashing: ${Math.round(bytesWritten / paddedSize * 100)}%`);
+                
+                // Log progress every few chunks
+                if (wordsWritten % (CHUNK_SIZE * 4) === 0 || wordsWritten === totalWords) {
+                    const actualBytesWritten = Math.min(bytesWritten, firmwareData.length);
+                    log(`Flashed ${actualBytesWritten} / ${firmwareData.length} bytes`, 'info');
                 }
             }
             
