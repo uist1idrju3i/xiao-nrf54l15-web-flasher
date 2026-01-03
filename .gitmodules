@@ -1,3 +1,6 @@
 [submodule "dapjs"]
 	path = dapjs
 	url = https://github.com/ARMmbed/dapjs/
+[submodule "platform-seeedboards"]
+	path = platform-seeedboards
+	url = https://github.com/Seeed-Studio/platform-seeedboards/
