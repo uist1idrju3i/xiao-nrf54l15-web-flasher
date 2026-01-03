@@ -620,11 +620,56 @@
                 // Reset ERASEALL task
                 await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEALL, 0);
                 
-                // Wait for device to stabilize
+                // Wait for device to stabilize (longer delay for reliable recovery)
+                log('Waiting for device to stabilize...', 'info');
+                await sleep(500);
+                
+                updateProgress(85, 'Reconnecting to verify recovery...');
+                
+                // Reconnect to re-initialize the debug session (equivalent to OpenOCD's arp_examine)
+                // This is critical for the device to be properly recovered
+                log('Reconnecting to verify device recovery...', 'info');
+                try {
+                    await dap.reconnect();
+                    log('Reconnected successfully', 'success');
+                } catch (reconnectError) {
+                    log(`Reconnect warning: ${reconnectError.message}`, 'warning');
+                    log('Attempting to continue...', 'info');
+                }
+                
+                // Additional delay after reconnect
                 await sleep(200);
+                
+                updateProgress(90, 'Verifying device accessibility...');
+                
+                // Verify device is accessible by reading CTRL-AP IDR again
+                log('Verifying device accessibility...', 'info');
+                try {
+                    const verifyIdr = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_IDR_REG);
+                    if (verifyIdr !== undefined) {
+                        log(`Post-erase CTRL-AP IDR: 0x${verifyIdr.toString(16).toUpperCase()}`, 'success');
+                    } else {
+                        log('Warning: Could not verify CTRL-AP IDR after erase', 'warning');
+                    }
+                    
+                    // Check ERASEPROTECTSTATUS to verify device is unlocked
+                    const protectStatus = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEPROTECTSTATUS);
+                    if (protectStatus !== undefined) {
+                        log(`ERASEPROTECTSTATUS: ${protectStatus}`, 'info');
+                        if (protectStatus >= 1) {
+                            log('Device is unlocked', 'success');
+                        } else {
+                            log('Warning: Device may still be locked (ERASEPROTECTSTATUS < 1)', 'warning');
+                        }
+                    }
+                } catch (verifyError) {
+                    log(`Verification warning: ${verifyError.message}`, 'warning');
+                    log('Device may need manual power cycle', 'warning');
+                }
                 
                 updateProgress(100, 'Mass erase complete');
                 log('Mass erase completed successfully!', 'success');
+                log('Note: If device appears unresponsive, try power cycling it.', 'info');
                 
                 return dap;
                 
