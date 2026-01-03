@@ -101,6 +101,16 @@
             transform: translateY(-2px);
         }
         
+        .btn-openblink {
+            background-color: #9333ea;
+            color: white;
+        }
+        
+        .btn-openblink:hover:not(:disabled) {
+            background-color: #a855f7;
+            transform: translateY(-2px);
+        }
+        
         .log-container {
             background-color: #0f0f23;
             border-radius: 8px;
@@ -285,7 +295,7 @@
     <div class="modal-overlay" id="disclaimerModal">
         <div class="modal-content">
             <h2>Disclaimer / At Your Own Risk</h2>
-            <p>This is an <strong>unofficial tool</strong> and is not affiliated with, endorsed by, or supported by Seeed Studio or Nordic Semiconductor.</p>
+            <p>This is an <strong>unofficial tool</strong> and is not affiliated with, endorsed by, or supported by Seeed Studio, Nordic Semiconductor, or OpenBlink.org.</p>
             <p>By using this tool, you acknowledge and agree to the following:</p>
             <ul>
                 <li>This tool is provided "AS IS" without warranty of any kind.</li>
@@ -321,6 +331,9 @@
                 <button class="btn-factory" id="factoryBtn" onclick="factoryReset()">
                     Factory Reset
                 </button>
+                <button class="btn-openblink" id="openblinkBtn" onclick="openblinkFlash()">
+                    OpenBlink XIAO nRF54L15 Firmware Flash
+                </button>
             </div>
             
             <div class="progress-container" id="progressContainer">
@@ -335,6 +348,7 @@
             <h2>Operation Details</h2>
             <p><strong>Recover Only:</strong> Performs a mass erase of the device using the CTRL-AP (Access Port #2). This will erase all flash memory and unlock the device if it was protected. No firmware will be written.</p>
             <p><strong>Factory Reset:</strong> Performs a mass erase followed by writing the factory firmware (firmware.hex) to the device. This restores the device to its original factory state.</p>
+            <p><strong>OpenBlink XIAO nRF54L15 Firmware Flash:</strong> Performs a mass erase followed by writing the OpenBlink firmware (<a href="https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense" target="_blank">openblink_XIAO_nRF54L15.hex</a>) to the device. This firmware is from the <a href="https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense" target="_blank">openblink_XIAO_nRF54L15_Sense</a> repository.</p>
         </div>
         
         <div class="log-container">
@@ -457,6 +471,7 @@
         function setButtonsEnabled(enabled) {
             document.getElementById('recoverBtn').disabled = !enabled;
             document.getElementById('factoryBtn').disabled = !enabled;
+            document.getElementById('openblinkBtn').disabled = !enabled;
         }
         
         function showProgress(show) {
@@ -1376,6 +1391,21 @@
             }
         }
         
+        // Load openblink_XIAO_nRF54L15.hex file
+        // This firmware is from: https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense
+        async function loadOpenblinkFirmware() {
+            try {
+                const response = await fetch('openblink_XIAO_nRF54L15.hex');
+                if (!response.ok) {
+                    throw new Error(`Failed to load openblink_XIAO_nRF54L15.hex: ${response.status} ${response.statusText}`);
+                }
+                const hexContent = await response.text();
+                return parseIntelHex(hexContent);
+            } catch (error) {
+                throw new Error(`Failed to load OpenBlink firmware: ${error.message}`);
+            }
+        }
+        
         // Recover Only operation
         async function recoverOnly() {
             if (isOperationInProgress) {
@@ -1595,6 +1625,175 @@
                 
                 updateStatus('Operation completed', true, false);
                 log('=== Factory Reset Completed Successfully ===', 'success');
+                
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                updateStatus('Operation failed', false, false);
+                
+                // Try to disconnect on error
+                if (dap) {
+                    try {
+                        await dap.disconnect();
+                    } catch (e) {
+                        // Ignore disconnect errors
+                    }
+                }
+            } finally {
+                isOperationInProgress = false;
+                setButtonsEnabled(true);
+                showProgress(false);
+            }
+        }
+        
+        // OpenBlink Flash operation
+        // Flashes firmware from: https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense
+        async function openblinkFlash() {
+            if (isOperationInProgress) {
+                log('Operation already in progress', 'warning');
+                return;
+            }
+            
+            clearLog();
+            isOperationInProgress = true;
+            setButtonsEnabled(false);
+            showProgress(true);
+            updateProgress(0, 'Starting...');
+            
+            let transport = null;
+            let dap = null;
+            
+            try {
+                log('=== OpenBlink XIAO nRF54L15 Firmware Flash Operation ===', 'info');
+                log('This will erase all flash memory and write OpenBlink XIAO nRF54L15 firmware.', 'info');
+                log('Firmware source: https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense', 'info');
+                
+                // Load firmware first
+                log('Loading openblink_XIAO_nRF54L15.hex...', 'info');
+                const firmware = await loadOpenblinkFirmware();
+                log(`Firmware loaded: ${firmware.size} bytes, start address: 0x${firmware.startAddress.toString(16)}`, 'success');
+                
+                updateStatus('Selecting device...', false, true);
+                const device = await selectDevice();
+                currentDevice = device;
+                
+                log(`Device selected: ${device.productName || 'CMSIS-DAP Device'}`, 'success');
+                updateStatus(`Connected: ${device.productName || 'CMSIS-DAP'}`, true, true);
+                
+                // Create WebUSB transport
+                transport = new DAPjs.WebUSB(device);
+                
+                // Perform mass erase
+                dap = await performMassErase(transport);
+                
+                // Check if device is unlocked before proceeding to flash
+                if (dap._isUnlocked === false) {
+                    log('Note: ERASEPROTECTSTATUS indicates device may still be protected.', 'warning');
+                    log('This is informational only - proceeding with flash attempt.', 'info');
+                    log('If flashing fails, try power cycling the device.', 'info');
+                }
+                
+                // CRITICAL: Create a fresh DAP instance for flashing
+                log('Creating fresh DAP connection for firmware flashing...', 'info');
+                await dap.disconnect();
+                await sleep(200);
+                
+                // Create new DAP instance with clean state
+                const flashDap = new DAPjs.ADI(transport);
+                await flashDap.connect();
+                log('Connected for flashing', 'success');
+                
+                // Additional delay to ensure device is ready for programming
+                await sleep(200);
+                
+                // Verify MEM-AP is accessible by reading address 0x0 before flashing
+                log('Verifying memory access before flashing...', 'info');
+                try {
+                    const testRead = await flashDap.readMem32(0);
+                    log(`Pre-flash memory read at 0x0: 0x${testRead.toString(16)}`, 'info');
+                    if (testRead === 0xFFFFFFFF) {
+                        log('Memory appears erased (0xFFFFFFFF), ready for programming', 'success');
+                    } else if (testRead === 0) {
+                        log('Warning: Memory read returned 0x0, MEM-AP may not be accessible', 'warning');
+                    }
+                } catch (memError) {
+                    log(`Memory access error: ${memError.message}`, 'warning');
+                    log('Attempting to flash anyway...', 'info');
+                }
+                
+                // Test SRAM write to verify DAP write path works
+                const SRAM_TEST_ADDR = 0x20000000;
+                const TEST_VALUE = 0xDEADBEEF;
+                log('Testing SRAM write capability...', 'info');
+                try {
+                    const proxy = getProxy(flashDap);
+                    const transport = getTransport(proxy);
+                    
+                    if (transport) {
+                        const AP_CSW = 0x00;
+                        const AP_TAR = 0x04;
+                        const AP_DRW = 0x0C;
+                        const CSW_VALUE = 0x23000052;
+                        
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_DEBUG,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: DP_REG_SELECT,
+                            value: 0x00000000
+                        }]);
+                        
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_CSW,
+                            value: CSW_VALUE
+                        }]);
+                        
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_TAR,
+                            value: SRAM_TEST_ADDR
+                        }]);
+                        
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_DRW,
+                            value: TEST_VALUE
+                        }]);
+                        
+                        const readBack = await flashDap.readMem32(SRAM_TEST_ADDR);
+                        
+                        if (readBack === TEST_VALUE) {
+                            log(`SRAM write test PASSED: wrote 0x${TEST_VALUE.toString(16)}, read 0x${readBack.toString(16)}`, 'success');
+                            log('DAP write path is working correctly.', 'success');
+                        } else {
+                            log(`SRAM write test FAILED: wrote 0x${TEST_VALUE.toString(16)}, read 0x${readBack.toString(16)}`, 'warning');
+                        }
+                    }
+                } catch (sramError) {
+                    log(`SRAM write test failed: ${sramError.message}`, 'warning');
+                    log('This may indicate the device is still protected or the DAP path is broken.', 'warning');
+                }
+                
+                // Flash firmware
+                updateProgress(80, 'Flashing firmware...');
+                await flashFirmware(flashDap, firmware.data, firmware.startAddress);
+                
+                // Use flashDap for remaining operations
+                dap = flashDap;
+                
+                // Reset device after flashing using CTRL-AP
+                await resetDeviceViaCTRLAP(dap);
+                
+                updateProgress(100, 'OpenBlink XIAO nRF54L15 firmware flash complete');
+                
+                // Disconnect
+                log('Disconnecting...', 'info');
+                await dap.disconnect();
+                
+                updateStatus('Operation completed', true, false);
+                log('=== OpenBlink XIAO nRF54L15 Firmware Flash Completed Successfully ===', 'success');
                 
             } catch (error) {
                 log(`Error: ${error.message}`, 'error');
