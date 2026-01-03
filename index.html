@@ -1280,6 +1280,10 @@
                 // Perform mass erase
                 const dap = await performMassErase(transport);
                 
+                // Reset device after erase
+                log('Resetting device...', 'info');
+                await dap.reset();
+                
                 // Disconnect
                 log('Disconnecting...', 'info');
                 await dap.disconnect();
