@@ -266,6 +266,48 @@
 
     <script type="text/javascript" src="lib/dap.umd.js"></script>
     <script>
+        // =============================================================================
+        // Seeed XIAO nRF54L15 Factory Reset Tool
+        // =============================================================================
+        //
+        // This tool implements two operations via CMSIS-DAP:
+        //   1. Recover Only: Mass erase using CTRL-AP (Access Port #2)
+        //   2. Factory Reset: Mass erase + firmware flashing
+        //
+        // Key Technical Findings (from debugging):
+        // -----------------------------------------
+        //
+        // 1. DAP.js Response Parsing Bug:
+        //    DAP.js's transfer() and transferBlock() functions try to read data from
+        //    responses at fixed offsets even for WRITE operations. The Seeed XIAO
+        //    CMSIS-DAP probe returns only 3 bytes (cmd + count + ack) for writes,
+        //    causing "Offset is outside the bounds of the DataView" errors.
+        //    Solution: Use rawDapTransferWrite() to build raw DAP_TRANSFER packets
+        //    and only parse the 3-byte header for write operations.
+        //
+        // 2. nRF54L15 Flash Architecture (RRAMC):
+        //    Unlike nRF52 series which uses NVMC (Non-Volatile Memory Controller),
+        //    the nRF54L15 uses RRAMC (Resistive RAM Controller). Direct MEM-AP writes
+        //    to flash will FAULT unless RRAMC is configured to enable writes.
+        //    Solution: Write 0x101 to RRAMC CONFIG (0x5004B500) before flash writes.
+        //    Reference: OpenOCD nrf54l-load procedure in platform-seeedboards.
+        //
+        // 3. ERASEPROTECTSTATUS Interpretation:
+        //    The ERASEPROTECTSTATUS register value semantics are not fully documented
+        //    for nRF54L15. A value of 0 does not necessarily mean the device is locked.
+        //    This is treated as informational only, not a hard gate for flashing.
+        //
+        // 4. DP.SELECT Cache Issue:
+        //    DAP.js caches the selectedAddress for DP.SELECT. After CTRL-AP operations,
+        //    a fresh DAP instance is needed to ensure MEM-AP (AP #0) is properly selected.
+        //
+        // Reference Files:
+        //   - platform-seeedboards/builder/board_build/nrf/nrf54l.cfg (OpenOCD config)
+        //   - platform-seeedboards/zephyr/boards/arm/xiao_nrf54l15/support/openocd.cfg
+        //   - platform-seeedboards/misc/svd/nrf54l15.svd (RRAMC register definitions)
+        //
+        // =============================================================================
+
         // nRF54L15 CTRL-AP constants (from nrf54l.cfg)
         const CTRL_AP_NUM = 2;
         const CTRL_AP_IDR = 0x32880000;
@@ -1157,7 +1199,7 @@
                 if (mismatchCount > 0) {
                     log(`Verification failed: ${mismatchCount} byte mismatches in first ${verifySize} bytes`, 'error');
                     log('WARNING: Firmware may not have been programmed correctly!', 'error');
-                    log('The device may require NVMC operations for proper flash programming.', 'warning');
+                    log('Check RRAMC configuration or try power cycling the device.', 'warning');
                     throw new Error(`Firmware verification failed: ${mismatchCount} mismatches`);
                 } else {
                     log(`Verification passed: first ${verifySize} bytes match`, 'success');
