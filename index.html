@@ -354,23 +354,59 @@
             }
         }
         
-        // Create AP register address with AP number
-        function apRegAddr(apNum, regOffset) {
-            return (apNum << 24) | regOffset;
+        // DP Register constants (from DAP.js dap/enums.ts)
+        const DP_REG_SELECT = 0x8;  // AP Select register (write only)
+        const DP_REG_RDBUFF = 0xC;  // Read Buffer register (read only)
+        
+        // DAP Port and Transfer Mode constants (from DAP.js proxy/enums.ts)
+        const DAP_PORT_DEBUG = 0x00;
+        const DAP_PORT_ACCESS = 0x01;
+        const DAP_TRANSFER_WRITE = 0x00;
+        const DAP_TRANSFER_READ = 0x02;
+        
+        // Bank Select Mask constants (from DAP.js dap/enums.ts)
+        const BANK_SELECT_APSEL = 0xFF000000;      // Selects the current access port
+        const BANK_SELECT_APBANKSEL = 0x000000F0;  // Selects the active 4-word register window
+        
+        // Create DP.SELECT value for a given AP number and register offset
+        // APSEL = bits [31:24] = AP number
+        // APBANKSEL = bits [7:4] = register bank (upper 4 bits of register offset)
+        function createSelectValue(apNum, regOffset) {
+            const apsel = (apNum << 24) & BANK_SELECT_APSEL;
+            const apbanksel = regOffset & BANK_SELECT_APBANKSEL;
+            return apsel | apbanksel;
         }
         
-        // Read AP register using DAP.js ADI with retry logic
+        // Get the A[3:2] bits for the transfer request (only 0x0, 0x4, 0x8, or 0xC)
+        function getTransferRegister(regOffset) {
+            return regOffset & 0x0C;
+        }
+        
+        // Read AP register using low-level DAP transfers with retry logic
+        // This properly separates DP.SELECT from the actual AP transfer
         async function readAPReg(dap, apNum, regOffset, retries = 3) {
-            // The AP address format: bits [31:24] = AP number, bits [7:4] = register bank, bits [3:0] = register offset
-            const addr = apRegAddr(apNum, regOffset);
+            const selectValue = createSelectValue(apNum, regOffset);
+            const transferReg = getTransferRegister(regOffset);
             
             for (let attempt = 0; attempt < retries; attempt++) {
                 try {
-                    const result = await dap.readAP(addr);
+                    // Access the underlying proxy (CmsisDAP) for low-level transfers
+                    const proxy = dap.proxy || dap;
+                    
+                    // Step 1: Write DP.SELECT to select the AP and register bank
+                    await proxy.transfer(DAP_PORT_DEBUG, DAP_TRANSFER_WRITE, DP_REG_SELECT, selectValue);
+                    
+                    // Step 2: Read from the AP register (using only A[3:2] bits)
+                    // Note: AP reads are posted, so we need to read RDBUFF to get the actual value
+                    await proxy.transfer(DAP_PORT_ACCESS, DAP_TRANSFER_READ, transferReg);
+                    
+                    // Step 3: Read RDBUFF to get the posted read result
+                    const result = await proxy.transfer(DAP_PORT_DEBUG, DAP_TRANSFER_READ, DP_REG_RDBUFF);
+                    
                     if (result !== undefined) {
                         return result;
                     }
-                    // Result is undefined, retry after a short delay
+                    
                     log(`AP read returned undefined (attempt ${attempt + 1}/${retries}), retrying...`, 'warning');
                     await sleep(50);
                 } catch (error) {
@@ -385,13 +421,22 @@
             return undefined;
         }
         
-        // Write AP register using DAP.js ADI with retry logic
+        // Write AP register using low-level DAP transfers with retry logic
         async function writeAPReg(dap, apNum, regOffset, value, retries = 3) {
-            const addr = apRegAddr(apNum, regOffset);
+            const selectValue = createSelectValue(apNum, regOffset);
+            const transferReg = getTransferRegister(regOffset);
             
             for (let attempt = 0; attempt < retries; attempt++) {
                 try {
-                    await dap.writeAP(addr, value);
+                    // Access the underlying proxy (CmsisDAP) for low-level transfers
+                    const proxy = dap.proxy || dap;
+                    
+                    // Step 1: Write DP.SELECT to select the AP and register bank
+                    await proxy.transfer(DAP_PORT_DEBUG, DAP_TRANSFER_WRITE, DP_REG_SELECT, selectValue);
+                    
+                    // Step 2: Write to the AP register (using only A[3:2] bits)
+                    await proxy.transfer(DAP_PORT_ACCESS, DAP_TRANSFER_WRITE, transferReg, value);
+                    
                     return;
                 } catch (error) {
                     if (attempt < retries - 1) {
