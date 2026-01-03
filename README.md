@@ -11,3 +11,7 @@ $ git clone https://github.com/uist1idrju3i/study-dapjs.git
 $ git submodule init
 $ git submodule update
 ```
+
+## Recommended VS Code Extensions
+
+* [Prettier - Code formatter](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
