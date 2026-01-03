@@ -1200,9 +1200,15 @@
                 dap = await performMassErase(transport);
                 
                 // Check if device is unlocked before proceeding to flash
+                // nRF54L15 uses RRAMC (Resistive Random Access Memory Controller) which has
+                // protection regions. After mass erase, the device may need a power cycle
+                // for the unlock to take effect.
                 if (dap._isUnlocked === false) {
-                    log('WARNING: Device may still be locked. Firmware flashing may fail.', 'warning');
-                    log('Attempting to flash anyway...', 'info');
+                    log('ERROR: Device is still locked after mass erase.', 'error');
+                    log('The nRF54L15 RRAMC protection is still active.', 'error');
+                    log('Please power cycle the device (unplug and replug USB) and try again.', 'error');
+                    log('If the problem persists, the device may need recovery via pyocd.', 'warning');
+                    throw new Error('Device is still locked. Please power cycle and retry.');
                 }
                 
                 // CRITICAL: Create a fresh DAP instance for flashing
@@ -1235,6 +1241,71 @@
                 } catch (memError) {
                     log(`Memory access error: ${memError.message}`, 'warning');
                     log('Attempting to flash anyway...', 'info');
+                }
+                
+                // Test SRAM write to verify DAP write path works
+                // nRF54L15 SRAM is typically at 0x20000000
+                const SRAM_TEST_ADDR = 0x20000000;
+                const TEST_VALUE = 0xDEADBEEF;
+                log('Testing SRAM write capability...', 'info');
+                try {
+                    // Get transport for raw writes
+                    const proxy = getProxy(flashDap);
+                    const transport = getTransport(proxy);
+                    
+                    if (transport) {
+                        // Try to write to SRAM using raw DAP_TRANSFER
+                        const AP_CSW = 0x00;
+                        const AP_TAR = 0x04;
+                        const AP_DRW = 0x0C;
+                        const CSW_VALUE = 0x23000052;
+                        
+                        // Select MEM-AP bank 0
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_DEBUG,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: DP_REG_SELECT,
+                            value: 0x00000000
+                        }]);
+                        
+                        // Write CSW
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_CSW,
+                            value: CSW_VALUE
+                        }]);
+                        
+                        // Write TAR
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_TAR,
+                            value: SRAM_TEST_ADDR
+                        }]);
+                        
+                        // Write test value to SRAM
+                        await rawDapTransferWrite(transport, [{
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_DRW,
+                            value: TEST_VALUE
+                        }]);
+                        
+                        // Read back using standard DAP.js (reads work)
+                        const readBack = await flashDap.readMem32(SRAM_TEST_ADDR);
+                        
+                        if (readBack === TEST_VALUE) {
+                            log(`SRAM write test PASSED: wrote 0x${TEST_VALUE.toString(16)}, read 0x${readBack.toString(16)}`, 'success');
+                            log('DAP write path is working correctly.', 'success');
+                        } else {
+                            log(`SRAM write test FAILED: wrote 0x${TEST_VALUE.toString(16)}, read 0x${readBack.toString(16)}`, 'warning');
+                        }
+                    }
+                } catch (sramError) {
+                    log(`SRAM write test failed: ${sramError.message}`, 'warning');
+                    log('This may indicate the device is still protected or the DAP path is broken.', 'warning');
+                    // Don't fail here - continue to try flash write which will give more specific error
                 }
                 
                 // Flash firmware
