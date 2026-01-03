@@ -787,36 +787,43 @@
         async function flashFirmware(dap, firmwareData, startAddress) {
             log(`Flashing ${firmwareData.length} bytes starting at 0x${startAddress.toString(16)}...`, 'info');
             
-            const BLOCK_SIZE = 1024; // Write in 1KB blocks
-            const totalBlocks = Math.ceil(firmwareData.length / BLOCK_SIZE);
+            // Convert firmware data to 32-bit words (pad with 0xFF if needed)
+            const paddedSize = Math.ceil(firmwareData.length / 4) * 4;
+            const paddedData = new Uint8Array(paddedSize);
+            paddedData.fill(0xFF); // Fill with 0xFF (erased flash value)
+            paddedData.set(firmwareData);
             
-            for (let block = 0; block < totalBlocks; block++) {
-                const offset = block * BLOCK_SIZE;
-                const address = startAddress + offset;
-                const size = Math.min(BLOCK_SIZE, firmwareData.length - offset);
-                const blockData = firmwareData.slice(offset, offset + size);
-                
-                // Convert to Uint32Array for writeBlock
-                // IMPORTANT: Pad with 0xFF (erased flash value), not 0x00
-                const paddedSize = Math.ceil(size / 4) * 4;
-                const paddedData = new Uint8Array(paddedSize);
-                paddedData.fill(0xFF); // Fill with 0xFF first
-                paddedData.set(blockData);
-                
-                const words = new Uint32Array(paddedData.buffer);
+            // Create DataView for reading 32-bit words (little-endian)
+            const dataView = new DataView(paddedData.buffer);
+            const totalWords = paddedSize / 4;
+            
+            // Use writeMem32 in a loop instead of writeBlock
+            // This avoids the DAP.js transferBlock response parsing bug that causes
+            // "Offset is outside the bounds of the DataView" errors on WRITE operations
+            log(`Writing ${totalWords} words using writeMem32...`, 'info');
+            
+            for (let i = 0; i < totalWords; i++) {
+                const address = startAddress + (i * 4);
+                const word = dataView.getUint32(i * 4, true); // little-endian
                 
                 try {
-                    await dap.writeBlock(address, words);
+                    await dap.writeMem32(address, word);
                 } catch (error) {
-                    log(`Error writing block at 0x${address.toString(16)}: ${error.message}`, 'error');
+                    log(`Error writing word at 0x${address.toString(16)}: ${error.message}`, 'error');
                     throw error;
                 }
                 
-                const progress = 80 + ((block + 1) / totalBlocks) * 15;
-                updateProgress(progress, `Flashing: ${Math.round((block + 1) / totalBlocks * 100)}%`);
+                // Update progress every 100 words or at the end
+                if ((i + 1) % 100 === 0 || i === totalWords - 1) {
+                    const bytesWritten = (i + 1) * 4;
+                    const progress = 80 + (bytesWritten / paddedSize) * 15;
+                    updateProgress(progress, `Flashing: ${Math.round(bytesWritten / paddedSize * 100)}%`);
+                }
                 
-                if ((block + 1) % 10 === 0 || block === totalBlocks - 1) {
-                    log(`Flashed ${offset + size} / ${firmwareData.length} bytes`, 'info');
+                // Log progress every 1000 words
+                if ((i + 1) % 1000 === 0 || i === totalWords - 1) {
+                    const bytesWritten = Math.min((i + 1) * 4, firmwareData.length);
+                    log(`Flashed ${bytesWritten} / ${firmwareData.length} bytes`, 'info');
                 }
             }
             
