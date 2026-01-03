@@ -382,6 +382,91 @@
             return regOffset & 0x0C;
         }
         
+        // CMSIS-DAP command constants
+        const DAP_COMMAND_TRANSFER = 0x05;
+        
+        // Get the underlying transport from a proxy or DAP instance
+        function getTransport(dapOrProxy) {
+            // Check common property names for the transport
+            const propNames = Object.getOwnPropertyNames(dapOrProxy);
+            for (const name of propNames) {
+                const prop = dapOrProxy[name];
+                if (prop && typeof prop === 'object' && typeof prop.write === 'function' && typeof prop.read === 'function') {
+                    return prop;
+                }
+            }
+            return null;
+        }
+        
+        // Raw DAP_TRANSFER write that bypasses DAP.js response parsing
+        // This is needed because DAP.js's transfer() and transferBlock() try to read
+        // data words from the response even for WRITE operations, causing DataView errors
+        // when the probe returns a shorter response (only cmd + count + ack for writes).
+        //
+        // DAP_TRANSFER packet format:
+        // Request: [cmd=0x05, dap_index=0, count, (req, value32)...]
+        // Response: [cmd=0x05, count, ack, (data32 for reads only)...]
+        async function rawDapTransferWrite(transport, operations) {
+            // Build the request packet
+            // Header: 1 byte cmd + 1 byte dap_index + 1 byte count = 3 bytes
+            // Each operation: 1 byte request + 4 bytes value = 5 bytes
+            const packetSize = 3 + (operations.length * 5);
+            const packet = new Uint8Array(packetSize);
+            const view = new DataView(packet.buffer);
+            
+            packet[0] = DAP_COMMAND_TRANSFER;  // Command
+            packet[1] = 0;                      // DAP index (ignored for SWD)
+            packet[2] = operations.length;      // Transfer count
+            
+            let offset = 3;
+            for (const op of operations) {
+                // Transfer request byte: port | mode | register
+                packet[offset] = op.port | op.mode | op.register;
+                // Transfer value (little-endian)
+                view.setUint32(offset + 1, op.value || 0, true);
+                offset += 5;
+            }
+            
+            // Send the packet
+            await transport.write(packet);
+            
+            // Read the response
+            const response = await transport.read();
+            
+            // Validate response header (only check what we know exists)
+            // Response format: [cmd, count, ack, ...]
+            // For writes, there are no data words, so response may be only 3 bytes
+            if (response.byteLength < 3) {
+                throw new Error(`DAP_TRANSFER response too short: ${response.byteLength} bytes`);
+            }
+            
+            const respCmd = response.getUint8(0);
+            const respCount = response.getUint8(1);
+            const respAck = response.getUint8(2);
+            
+            if (respCmd !== DAP_COMMAND_TRANSFER) {
+                throw new Error(`Bad response command: expected 0x05, got 0x${respCmd.toString(16)}`);
+            }
+            
+            if (respCount !== operations.length) {
+                throw new Error(`Transfer count mismatch: expected ${operations.length}, got ${respCount}`);
+            }
+            
+            // Check ACK (lower 3 bits: 1=OK, 2=WAIT, 4=FAULT)
+            const ackValue = respAck & 0x07;
+            if (ackValue === 0x02) {
+                throw new Error('Transfer response WAIT');
+            }
+            if (ackValue === 0x04) {
+                throw new Error('Transfer response FAULT');
+            }
+            if (ackValue !== 0x01) {
+                throw new Error(`Transfer response error: ACK=0x${respAck.toString(16)}`);
+            }
+            
+            return true;
+        }
+        
         // Read AP register using array-based DAP transfers with retry logic
         // This properly separates DP.SELECT from the actual AP transfer
         // Uses the array-based transfer overload to avoid DataView errors on writes
@@ -843,26 +928,33 @@
             throw new Error('Could not find proxy object with transferBlock in ADI instance');
         }
         
-        // Flash firmware to device using direct transferBlock API
-        // This bypasses the buggy ADI.writeBlock() which internally uses transfer() with
-        // multiple operations, causing "Offset is outside the bounds of DataView" errors.
+        // Flash firmware to device using raw DAP_TRANSFER writes
+        // This bypasses DAP.js's buggy response parsing which causes DataView errors.
         // 
-        // The bug: DAP.js transfer([ops]) always tries to read ops.length * 4 bytes from
-        // the response, even for WRITE operations which don't return data words.
-        // This affects ALL array-based transfer() calls, even single-element ones.
+        // The bug: DAP.js transfer() and transferBlock() try to read data from the response
+        // at fixed offsets (getUint32(3) or getUint8(3)), but WRITE responses from some probes
+        // are shorter (only cmd + count + ack = 3 bytes), causing "Offset is outside the bounds
+        // of the DataView" errors.
         //
-        // Solution: Use transferBlock() for ALL writes (including setup registers).
-        // transferBlock() is safe for writes because it doesn't try to read data from response.
+        // Solution: Use raw DAP_TRANSFER packets via transport.write()/read() and only parse
+        // the 3-byte header for write operations.
         async function flashFirmware(dap, firmwareData, startAddress) {
             log(`Flashing ${firmwareData.length} bytes starting at 0x${startAddress.toString(16)}...`, 'info');
             
-            // Get the underlying proxy for direct transferBlock access
+            // Get the underlying proxy and transport for raw packet access
             const proxy = getProxy(dap);
+            const transport = getTransport(proxy);
             
-            // Get the maximum block size from the proxy (based on CMSIS-DAP packet size)
-            // blockSize = packetSize - BLOCK_HEADER_SIZE - 1 (typically 59 bytes for 64-byte packets)
-            const maxBlockWords = Math.floor(proxy.blockSize / 4);
-            log(`CMSIS-DAP block size: ${proxy.blockSize} bytes (${maxBlockWords} words max per transfer)`, 'info');
+            if (!transport) {
+                throw new Error('Could not find transport object in proxy');
+            }
+            
+            // Calculate max operations per DAP_TRANSFER packet
+            // DAP_TRANSFER packet: 3 bytes header + 5 bytes per operation
+            // For 64-byte packets: (64 - 3) / 5 = 12 operations max
+            const packetSize = 64;  // Standard CMSIS-DAP packet size
+            const maxOpsPerPacket = Math.floor((packetSize - 3) / 5);
+            log(`Max operations per DAP_TRANSFER packet: ${maxOpsPerPacket}`, 'info');
             
             // Convert firmware data to 32-bit words (pad with 0xFF if needed)
             const paddedSize = Math.ceil(firmwareData.length / 4) * 4;
@@ -870,11 +962,11 @@
             paddedData.fill(0xFF); // Fill with 0xFF (erased flash value)
             paddedData.set(firmwareData);
             
-            // Convert to Uint32Array for block writes
+            // Convert to Uint32Array for word writes
             const words = new Uint32Array(paddedData.buffer);
             const totalWords = words.length;
             
-            log(`Writing ${totalWords} words using direct transferBlock...`, 'info');
+            log(`Writing ${totalWords} words using raw DAP_TRANSFER...`, 'info');
             
             // MEM-AP register offsets (only A[3:2] bits used in transfer)
             const AP_CSW = 0x00;  // Control/Status Word
@@ -887,37 +979,63 @@
             // SIZE_32 = 0x02
             const CSW_VALUE = 0x23000052;
             
-            // Select MEM-AP (AP #0) bank 0 for CSW/TAR/DRW
-            // Use transferBlock for ALL writes to avoid the buggy transfer() function
-            await proxy.transferBlock(DAP_PORT_DEBUG, DP_REG_SELECT, new Uint32Array([0x00000000]));
+            // Select MEM-AP (AP #0) bank 0 for CSW/TAR/DRW using raw transfer
+            await rawDapTransferWrite(transport, [{
+                port: DAP_PORT_DEBUG,
+                mode: DAP_TRANSFER_WRITE,
+                register: DP_REG_SELECT,
+                value: 0x00000000  // APSEL=0, APBANKSEL=0
+            }]);
             
             // Write CSW for 32-bit access with auto-increment
-            await proxy.transferBlock(DAP_PORT_ACCESS, AP_CSW, new Uint32Array([CSW_VALUE]));
+            await rawDapTransferWrite(transport, [{
+                port: DAP_PORT_ACCESS,
+                mode: DAP_TRANSFER_WRITE,
+                register: AP_CSW,
+                value: CSW_VALUE
+            }]);
             
-            // Write in chunks, respecting both:
-            // 1. CMSIS-DAP packet size limit (maxBlockWords)
-            // 2. 1KB TAR auto-increment boundary (0x400)
+            // Write firmware word by word, batching multiple DRW writes per packet
+            // We need to set TAR before each batch, then write multiple words to DRW
+            // (TAR auto-increments by 4 after each DRW write due to CSW settings)
             let wordsWritten = 0;
             
             while (wordsWritten < totalWords) {
                 const currentAddress = startAddress + (wordsWritten * 4);
                 
-                // Calculate words until next 1KB boundary
+                // Calculate words until next 1KB boundary (TAR auto-increment wraps at 1KB)
                 const bytesToBoundary = 0x400 - (currentAddress & 0x3FF);
                 const wordsToBoundary = bytesToBoundary / 4;
                 
-                // Chunk size is minimum of: remaining words, words to boundary, max block size
+                // Chunk size is minimum of: remaining words, words to boundary, max ops - 1 (for TAR write)
                 const remainingWords = totalWords - wordsWritten;
-                const chunkWords = Math.min(remainingWords, wordsToBoundary, maxBlockWords);
-                const chunkData = words.slice(wordsWritten, wordsWritten + chunkWords);
+                const maxDataOps = maxOpsPerPacket - 1;  // Reserve 1 op for TAR write
+                const chunkWords = Math.min(remainingWords, wordsToBoundary, maxDataOps);
                 
                 try {
-                    // Write TAR with chunk start address using transferBlock
-                    await proxy.transferBlock(DAP_PORT_ACCESS, AP_TAR, new Uint32Array([currentAddress]));
+                    // Build operations: TAR write + multiple DRW writes
+                    const operations = [];
                     
-                    // Write data block using transferBlock (safe for writes)
-                    // transferBlock uses DAP_TRANSFER_BLOCK command which doesn't have the bug
-                    await proxy.transferBlock(DAP_PORT_ACCESS, AP_DRW, chunkData);
+                    // First operation: write TAR with chunk start address
+                    operations.push({
+                        port: DAP_PORT_ACCESS,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: AP_TAR,
+                        value: currentAddress
+                    });
+                    
+                    // Subsequent operations: write data words to DRW
+                    for (let i = 0; i < chunkWords; i++) {
+                        operations.push({
+                            port: DAP_PORT_ACCESS,
+                            mode: DAP_TRANSFER_WRITE,
+                            register: AP_DRW,
+                            value: words[wordsWritten + i]
+                        });
+                    }
+                    
+                    // Execute all operations in one packet
+                    await rawDapTransferWrite(transport, operations);
                 } catch (error) {
                     log(`Error writing chunk at 0x${currentAddress.toString(16)}: ${error.message}`, 'error');
                     throw error;
@@ -940,26 +1058,33 @@
             log('Firmware write completed, verifying...', 'info');
             
             // Verify firmware by reading back and comparing
-            // Use transferBlock for reads too, respecting the block size limit
+            // For reads, we can use the standard DAP.js API since reads return data
             updateProgress(95, 'Verifying firmware...');
             log('Verifying firmware (reading back and comparing)...', 'info');
             
-            // Verify first 256 bytes (vector table area - critical)
-            // But limit to maxBlockWords to avoid exceeding packet size
-            const verifySize = Math.min(256, firmwareData.length);
-            const verifyWords = Math.min(verifySize / 4, maxBlockWords);
-            const actualVerifySize = verifyWords * 4;
+            // Verify first 56 bytes (vector table area - critical)
+            // Limited by max block read size
+            const verifySize = Math.min(56, firmwareData.length);
+            const verifyWords = verifySize / 4;
             
             try {
-                // Set TAR to start address for verification read using transferBlock
-                await proxy.transferBlock(DAP_PORT_ACCESS, AP_TAR, new Uint32Array([startAddress]));
+                // Use standard DAP.js readMem32 for verification (reads work correctly)
+                const readBack = [];
+                for (let i = 0; i < verifyWords; i++) {
+                    const addr = startAddress + (i * 4);
+                    const value = await dap.readMem32(addr);
+                    readBack.push(value);
+                }
                 
-                // Read data block using transferBlock (safe for reads too)
-                const readBack = await proxy.transferBlock(DAP_PORT_ACCESS, AP_DRW, verifyWords);
-                const readBytes = new Uint8Array(readBack.buffer);
+                // Convert to bytes for comparison
+                const readBytes = new Uint8Array(verifyWords * 4);
+                const readView = new DataView(readBytes.buffer);
+                for (let i = 0; i < verifyWords; i++) {
+                    readView.setUint32(i * 4, readBack[i], true);
+                }
                 
                 let mismatchCount = 0;
-                for (let i = 0; i < actualVerifySize; i++) {
+                for (let i = 0; i < verifySize; i++) {
                     if (readBytes[i] !== firmwareData[i]) {
                         mismatchCount++;
                         if (mismatchCount <= 5) {
@@ -969,12 +1094,12 @@
                 }
                 
                 if (mismatchCount > 0) {
-                    log(`Verification failed: ${mismatchCount} byte mismatches in first ${actualVerifySize} bytes`, 'error');
+                    log(`Verification failed: ${mismatchCount} byte mismatches in first ${verifySize} bytes`, 'error');
                     log('WARNING: Firmware may not have been programmed correctly!', 'error');
                     log('The device may require NVMC operations for proper flash programming.', 'warning');
                     throw new Error(`Firmware verification failed: ${mismatchCount} mismatches`);
                 } else {
-                    log(`Verification passed: first ${actualVerifySize} bytes match`, 'success');
+                    log(`Verification passed: first ${verifySize} bytes match`, 'success');
                 }
             } catch (verifyError) {
                 if (verifyError.message.includes('verification failed')) {
