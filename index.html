@@ -382,8 +382,9 @@
             return regOffset & 0x0C;
         }
         
-        // Read AP register using low-level DAP transfers with retry logic
+        // Read AP register using array-based DAP transfers with retry logic
         // This properly separates DP.SELECT from the actual AP transfer
+        // Uses the array-based transfer overload to avoid DataView errors on writes
         async function readAPReg(dap, apNum, regOffset, retries = 3) {
             const selectValue = createSelectValue(apNum, regOffset);
             const transferReg = getTransferRegister(regOffset);
@@ -391,23 +392,50 @@
             for (let attempt = 0; attempt < retries; attempt++) {
                 try {
                     // Access the underlying proxy (CmsisDAP) for low-level transfers
-                    const proxy = dap.proxy || dap;
-                    
-                    // Step 1: Write DP.SELECT to select the AP and register bank
-                    await proxy.transfer(DAP_PORT_DEBUG, DAP_TRANSFER_WRITE, DP_REG_SELECT, selectValue);
-                    
-                    // Step 2: Read from the AP register (using only A[3:2] bits)
-                    // Note: AP reads are posted, so we need to read RDBUFF to get the actual value
-                    await proxy.transfer(DAP_PORT_ACCESS, DAP_TRANSFER_READ, transferReg);
-                    
-                    // Step 3: Read RDBUFF to get the posted read result
-                    const result = await proxy.transfer(DAP_PORT_DEBUG, DAP_TRANSFER_READ, DP_REG_RDBUFF);
-                    
-                    if (result !== undefined) {
-                        return result;
+                    // In minified code, 'proxy' might be renamed, so we check common property names
+                    let proxy = null;
+                    const propNames = Object.getOwnPropertyNames(dap);
+                    for (const name of propNames) {
+                        const prop = dap[name];
+                        if (prop && typeof prop === 'object' && typeof prop.transfer === 'function') {
+                            proxy = prop;
+                            break;
+                        }
                     }
                     
-                    log(`AP read returned undefined (attempt ${attempt + 1}/${retries}), retrying...`, 'warning');
+                    if (!proxy) {
+                        throw new Error('Could not find proxy object in ADI instance');
+                    }
+                    
+                    // Step 1: Write DP.SELECT to select the AP and register bank
+                    // Use array-based transfer to avoid DataView error on writes
+                    await proxy.transfer([{
+                        port: DAP_PORT_DEBUG,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: DP_REG_SELECT,
+                        value: selectValue
+                    }]);
+                    
+                    // Step 2: Read from the AP register (using only A[3:2] bits)
+                    // AP reads are posted, so we need to read RDBUFF to get the actual value
+                    await proxy.transfer([{
+                        port: DAP_PORT_ACCESS,
+                        mode: DAP_TRANSFER_READ,
+                        register: transferReg
+                    }]);
+                    
+                    // Step 3: Read RDBUFF to get the posted read result
+                    const result = await proxy.transfer([{
+                        port: DAP_PORT_DEBUG,
+                        mode: DAP_TRANSFER_READ,
+                        register: DP_REG_RDBUFF
+                    }]);
+                    
+                    if (result && result.length > 0) {
+                        return result[0];
+                    }
+                    
+                    log(`AP read returned empty result (attempt ${attempt + 1}/${retries}), retrying...`, 'warning');
                     await sleep(50);
                 } catch (error) {
                     if (attempt < retries - 1) {
@@ -421,7 +449,7 @@
             return undefined;
         }
         
-        // Write AP register using low-level DAP transfers with retry logic
+        // Write AP register using array-based DAP transfers with retry logic
         async function writeAPReg(dap, apNum, regOffset, value, retries = 3) {
             const selectValue = createSelectValue(apNum, regOffset);
             const transferReg = getTransferRegister(regOffset);
@@ -429,13 +457,35 @@
             for (let attempt = 0; attempt < retries; attempt++) {
                 try {
                     // Access the underlying proxy (CmsisDAP) for low-level transfers
-                    const proxy = dap.proxy || dap;
+                    let proxy = null;
+                    const propNames = Object.getOwnPropertyNames(dap);
+                    for (const name of propNames) {
+                        const prop = dap[name];
+                        if (prop && typeof prop === 'object' && typeof prop.transfer === 'function') {
+                            proxy = prop;
+                            break;
+                        }
+                    }
+                    
+                    if (!proxy) {
+                        throw new Error('Could not find proxy object in ADI instance');
+                    }
                     
                     // Step 1: Write DP.SELECT to select the AP and register bank
-                    await proxy.transfer(DAP_PORT_DEBUG, DAP_TRANSFER_WRITE, DP_REG_SELECT, selectValue);
+                    await proxy.transfer([{
+                        port: DAP_PORT_DEBUG,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: DP_REG_SELECT,
+                        value: selectValue
+                    }]);
                     
                     // Step 2: Write to the AP register (using only A[3:2] bits)
-                    await proxy.transfer(DAP_PORT_ACCESS, DAP_TRANSFER_WRITE, transferReg, value);
+                    await proxy.transfer([{
+                        port: DAP_PORT_ACCESS,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: transferReg,
+                        value: value
+                    }]);
                     
                     return;
                 } catch (error) {
