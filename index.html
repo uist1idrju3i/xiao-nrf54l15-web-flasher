@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seeed XIAO nRF54L15 Factory Reset Tool</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: #1a1a2e;
+            color: #eaeaea;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #00d4ff;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 40px;
+            font-size: 14px;
+        }
+        
+        .card {
+            background-color: #16213e;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .card h2 {
+            margin-top: 0;
+            color: #00d4ff;
+            font-size: 18px;
+            font-weight: 500;
+        }
+        
+        .card p {
+            color: #aaa;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 14px 28px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-recover {
+            background-color: #e94560;
+            color: white;
+        }
+        
+        .btn-recover:hover:not(:disabled) {
+            background-color: #ff6b6b;
+            transform: translateY(-2px);
+        }
+        
+        .btn-factory {
+            background-color: #00d4ff;
+            color: #1a1a2e;
+        }
+        
+        .btn-factory:hover:not(:disabled) {
+            background-color: #4de8ff;
+            transform: translateY(-2px);
+        }
+        
+        .log-container {
+            background-color: #0f0f23;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .log-container h3 {
+            margin-top: 0;
+            color: #00d4ff;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 15px;
+        }
+        
+        #log {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .log-info { color: #00d4ff; }
+        .log-success { color: #4ade80; }
+        .log-error { color: #f87171; }
+        .log-warning { color: #fbbf24; }
+        
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #0f0f23;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00d4ff, #4de8ff);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #888;
+        }
+        
+        .warning-box {
+            background-color: rgba(251, 191, 36, 0.1);
+            border: 1px solid #fbbf24;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .warning-box p {
+            color: #fbbf24;
+            margin: 0;
+            font-size: 13px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-disconnected { background-color: #f87171; }
+        .status-connected { background-color: #4ade80; }
+        .status-busy { background-color: #fbbf24; }
+        
+        .device-status {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 12px;
+        }
+        
+        footer a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Seeed XIAO nRF54L15 Factory Reset Tool</h1>
+        <p class="subtitle">WebUSB-based device recovery and factory reset using CMSIS-DAP</p>
+        
+        <div class="card">
+            <h2>Device Operations</h2>
+            
+            <div class="warning-box">
+                <p><strong>Warning:</strong> These operations will erase all data on the device. Make sure you have backed up any important data before proceeding.</p>
+            </div>
+            
+            <div class="device-status">
+                <span class="status-indicator status-disconnected" id="statusIndicator"></span>
+                <span id="deviceStatus">No device connected</span>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn-recover" id="recoverBtn" onclick="recoverOnly()">
+                    Recover Only
+                </button>
+                <button class="btn-factory" id="factoryBtn" onclick="factoryReset()">
+                    Factory Reset
+                </button>
+            </div>
+            
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">0%</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Operation Details</h2>
+            <p><strong>Recover Only:</strong> Performs a mass erase of the device using the CTRL-AP (Access Port #2). This will erase all flash memory and unlock the device if it was protected. No firmware will be written.</p>
+            <p><strong>Factory Reset:</strong> Performs a mass erase followed by writing the factory firmware (firmware.hex) to the device. This restores the device to its original factory state.</p>
+        </div>
+        
+        <div class="log-container">
+            <h3>Operation Log</h3>
+            <div id="log"></div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>Powered by <a href="https://github.com/ARMmbed/dapjs" target="_blank">DAP.js</a> | 
+        Target: Seeed XIAO nRF54L15</p>
+        <p style="margin-top: 15px; font-size: 11px; color: #555;">
+            <strong>Licenses:</strong><br>
+            DAP.js - <a href="lib/dapjs-LICENSE.txt" target="_blank">MIT License</a>, Copyright (c) Arm Limited 2018, Microsoft Corporation<br>
+            nRF54L15 configuration reference from <a href="https://github.com/OpenBlink/platform-seeedboards" target="_blank">platform-seeedboards</a> - Apache License 2.0
+        </p>
+    </footer>
+
+    <script type="text/javascript" src="lib/dap.umd.js"></script>
+    <script>
+        // nRF54L15 CTRL-AP constants (from nrf54l.cfg)
+        const CTRL_AP_NUM = 2;
+        const CTRL_AP_IDR = 0x32880000;
+        
+        // CTRL-AP register offsets
+        const CTRL_AP_RESET = 0x000;
+        const CTRL_AP_ERASEALL = 0x004;
+        const CTRL_AP_ERASEALLSTATUS = 0x008;
+        const CTRL_AP_ERASEPROTECTSTATUS = 0x00C;
+        const CTRL_AP_IDR_REG = 0x0FC;
+        
+        // ERASEALLSTATUS values
+        const ERASEALLSTATUS_READY = 0;
+        const ERASEALLSTATUS_READYTORESET = 1;
+        const ERASEALLSTATUS_BUSY = 2;
+        const ERASEALLSTATUS_ERROR = 3;
+        
+        // Global state
+        let currentDevice = null;
+        let isOperationInProgress = false;
+        
+        // Logging functions
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const span = document.createElement('span');
+            span.className = `log-${type}`;
+            span.textContent = `[${timestamp}] ${message}\n`;
+            logEl.appendChild(span);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function updateStatus(status, connected = false, busy = false) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('deviceStatus');
+            
+            indicator.className = 'status-indicator';
+            if (busy) {
+                indicator.classList.add('status-busy');
+            } else if (connected) {
+                indicator.classList.add('status-connected');
+            } else {
+                indicator.classList.add('status-disconnected');
+            }
+            
+            statusText.textContent = status;
+        }
+        
+        function setButtonsEnabled(enabled) {
+            document.getElementById('recoverBtn').disabled = !enabled;
+            document.getElementById('factoryBtn').disabled = !enabled;
+        }
+        
+        function showProgress(show) {
+            document.getElementById('progressContainer').style.display = show ? 'block' : 'none';
+        }
+        
+        function updateProgress(percent, text) {
+            document.getElementById('progressFill').style.width = `${percent}%`;
+            document.getElementById('progressText').textContent = text || `${Math.round(percent)}%`;
+        }
+        
+        // Sleep utility
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+        
+        // Select CMSIS-DAP device via WebUSB
+        async function selectDevice() {
+            try {
+                const device = await navigator.usb.requestDevice({
+                    filters: [
+                        { vendorId: 0x2886 },  // Seeed Technology Co., Ltd.
+                    ]
+                });
+                return device;
+            } catch (error) {
+                if (error.name === 'NotFoundError') {
+                    throw new Error('No device selected. Please select a Seeed CMSIS-DAP device.');
+                }
+                throw error;
+            }
+        }
+        
+        // DP Register constants (from DAP.js dap/enums.ts)
+        const DP_REG_SELECT = 0x8;  // AP Select register (write only)
+        const DP_REG_RDBUFF = 0xC;  // Read Buffer register (read only)
+        
+        // DAP Port and Transfer Mode constants (from DAP.js proxy/enums.ts)
+        const DAP_PORT_DEBUG = 0x00;
+        const DAP_PORT_ACCESS = 0x01;
+        const DAP_TRANSFER_WRITE = 0x00;
+        const DAP_TRANSFER_READ = 0x02;
+        
+        // Bank Select Mask constants (from DAP.js dap/enums.ts)
+        const BANK_SELECT_APSEL = 0xFF000000;      // Selects the current access port
+        const BANK_SELECT_APBANKSEL = 0x000000F0;  // Selects the active 4-word register window
+        
+        // Create DP.SELECT value for a given AP number and register offset
+        // APSEL = bits [31:24] = AP number
+        // APBANKSEL = bits [7:4] = register bank (upper 4 bits of register offset)
+        function createSelectValue(apNum, regOffset) {
+            const apsel = (apNum << 24) & BANK_SELECT_APSEL;
+            const apbanksel = regOffset & BANK_SELECT_APBANKSEL;
+            return apsel | apbanksel;
+        }
+        
+        // Get the A[3:2] bits for the transfer request (only 0x0, 0x4, 0x8, or 0xC)
+        function getTransferRegister(regOffset) {
+            return regOffset & 0x0C;
+        }
+        
+        // Read AP register using array-based DAP transfers with retry logic
+        // This properly separates DP.SELECT from the actual AP transfer
+        // Uses the array-based transfer overload to avoid DataView errors on writes
+        async function readAPReg(dap, apNum, regOffset, retries = 3) {
+            const selectValue = createSelectValue(apNum, regOffset);
+            const transferReg = getTransferRegister(regOffset);
+            
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    // Access the underlying proxy (CmsisDAP) for low-level transfers
+                    // In minified code, 'proxy' might be renamed, so we check common property names
+                    let proxy = null;
+                    const propNames = Object.getOwnPropertyNames(dap);
+                    for (const name of propNames) {
+                        const prop = dap[name];
+                        if (prop && typeof prop === 'object' && typeof prop.transfer === 'function') {
+                            proxy = prop;
+                            break;
+                        }
+                    }
+                    
+                    if (!proxy) {
+                        throw new Error('Could not find proxy object in ADI instance');
+                    }
+                    
+                    // Step 1: Write DP.SELECT to select the AP and register bank
+                    // Use array-based transfer to avoid DataView error on writes
+                    await proxy.transfer([{
+                        port: DAP_PORT_DEBUG,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: DP_REG_SELECT,
+                        value: selectValue
+                    }]);
+                    
+                    // Step 2: Read from the AP register (using only A[3:2] bits)
+                    // AP reads are posted, so we need to read RDBUFF to get the actual value
+                    await proxy.transfer([{
+                        port: DAP_PORT_ACCESS,
+                        mode: DAP_TRANSFER_READ,
+                        register: transferReg
+                    }]);
+                    
+                    // Step 3: Read RDBUFF to get the posted read result
+                    const result = await proxy.transfer([{
+                        port: DAP_PORT_DEBUG,
+                        mode: DAP_TRANSFER_READ,
+                        register: DP_REG_RDBUFF
+                    }]);
+                    
+                    if (result && result.length > 0) {
+                        return result[0];
+                    }
+                    
+                    log(`AP read returned empty result (attempt ${attempt + 1}/${retries}), retrying...`, 'warning');
+                    await sleep(50);
+                } catch (error) {
+                    if (attempt < retries - 1) {
+                        log(`AP read error (attempt ${attempt + 1}/${retries}): ${error.message}, retrying...`, 'warning');
+                        await sleep(50);
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+            return undefined;
+        }
+        
+        // Write AP register using array-based DAP transfers with retry logic
+        async function writeAPReg(dap, apNum, regOffset, value, retries = 3) {
+            const selectValue = createSelectValue(apNum, regOffset);
+            const transferReg = getTransferRegister(regOffset);
+            
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    // Access the underlying proxy (CmsisDAP) for low-level transfers
+                    let proxy = null;
+                    const propNames = Object.getOwnPropertyNames(dap);
+                    for (const name of propNames) {
+                        const prop = dap[name];
+                        if (prop && typeof prop === 'object' && typeof prop.transfer === 'function') {
+                            proxy = prop;
+                            break;
+                        }
+                    }
+                    
+                    if (!proxy) {
+                        throw new Error('Could not find proxy object in ADI instance');
+                    }
+                    
+                    // Step 1: Write DP.SELECT to select the AP and register bank
+                    await proxy.transfer([{
+                        port: DAP_PORT_DEBUG,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: DP_REG_SELECT,
+                        value: selectValue
+                    }]);
+                    
+                    // Step 2: Write to the AP register (using only A[3:2] bits)
+                    await proxy.transfer([{
+                        port: DAP_PORT_ACCESS,
+                        mode: DAP_TRANSFER_WRITE,
+                        register: transferReg,
+                        value: value
+                    }]);
+                    
+                    return;
+                } catch (error) {
+                    if (attempt < retries - 1) {
+                        log(`AP write error (attempt ${attempt + 1}/${retries}): ${error.message}, retrying...`, 'warning');
+                        await sleep(50);
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+        }
+        
+        // Perform nRF54L15 mass erase using CTRL-AP
+        async function performMassErase(transport) {
+            log('Initializing DAP connection...', 'info');
+            
+            // Create ADI instance for low-level DAP access
+            const dap = new DAPjs.ADI(transport);
+            
+            try {
+                // Connect to the DAP
+                await dap.connect();
+                log('DAP connected successfully', 'success');
+                
+                // Read CTRL-AP IDR to verify we can access it
+                log('Verifying CTRL-AP access (AP #2)...', 'info');
+                const idr = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_IDR_REG);
+                
+                if (idr === undefined) {
+                    log('Warning: Could not read CTRL-AP IDR (returned undefined)', 'warning');
+                    log('This may indicate the device is locked or CTRL-AP is not accessible.', 'warning');
+                    log('Attempting mass erase anyway...', 'warning');
+                } else {
+                    log(`CTRL-AP IDR: 0x${idr.toString(16).toUpperCase()}`, 'info');
+                    
+                    if (idr !== CTRL_AP_IDR) {
+                        log(`Warning: Unexpected CTRL-AP IDR (expected 0x${CTRL_AP_IDR.toString(16).toUpperCase()})`, 'warning');
+                        log('Proceeding with mass erase anyway...', 'warning');
+                    }
+                }
+                
+                // Reset ERASEALL task first
+                log('Resetting ERASEALL task...', 'info');
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEALL, 0);
+                await sleep(10);
+                
+                // Trigger ERASEALL task
+                log('Triggering mass erase (ERASEALL)...', 'info');
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEALL, 1);
+                
+                // Wait for BUSY state
+                log('Waiting for erase to start...', 'info');
+                let timeout = 300; // ~30 seconds
+                let status;
+                
+                for (let i = 0; i < timeout; i++) {
+                    status = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEALLSTATUS);
+                    
+                    if (status === undefined) {
+                        // Status read failed, continue polling
+                        await sleep(100);
+                        updateProgress((i / timeout) * 30, 'Starting erase...');
+                        continue;
+                    }
+                    
+                    if (status === ERASEALLSTATUS_BUSY) {
+                        log('Erase in progress (BUSY)...', 'info');
+                        break;
+                    }
+                    
+                    if (status === ERASEALLSTATUS_ERROR) {
+                        throw new Error('Erase failed with ERROR status');
+                    }
+                    
+                    if (status === ERASEALLSTATUS_READYTORESET) {
+                        log('Device already erased (READYTORESET)', 'success');
+                        break;
+                    }
+                    
+                    await sleep(100);
+                    updateProgress((i / timeout) * 30, 'Starting erase...');
+                }
+                
+                if (status === undefined || (status !== ERASEALLSTATUS_BUSY && status !== ERASEALLSTATUS_READYTORESET)) {
+                    throw new Error('Timeout waiting for erase to start or unable to read status');
+                }
+                
+                // Wait for READYTORESET state
+                if (status === ERASEALLSTATUS_BUSY) {
+                    log('Waiting for erase to complete...', 'info');
+                    
+                    for (let i = 0; i < timeout; i++) {
+                        status = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEALLSTATUS);
+                        
+                        if (status === undefined) {
+                            // Status read failed, continue polling
+                            await sleep(100);
+                            updateProgress(30 + (i / timeout) * 50, 'Erasing...');
+                            continue;
+                        }
+                        
+                        if (status === ERASEALLSTATUS_READYTORESET) {
+                            log('Erase completed successfully (READYTORESET)', 'success');
+                            break;
+                        }
+                        
+                        if (status === ERASEALLSTATUS_ERROR) {
+                            throw new Error('Erase failed with ERROR status');
+                        }
+                        
+                        await sleep(100);
+                        updateProgress(30 + (i / timeout) * 50, 'Erasing...');
+                    }
+                    
+                    if (status === undefined || status !== ERASEALLSTATUS_READYTORESET) {
+                        throw new Error('Timeout waiting for erase to complete or unable to read status');
+                    }
+                }
+                
+                updateProgress(80, 'Resetting device...');
+                
+                // Short delay before reset
+                await sleep(10);
+                
+                // Assert reset: write 2 then 0
+                log('Resetting device...', 'info');
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_RESET, 2);
+                await sleep(10);
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_RESET, 0);
+                
+                // Reset ERASEALL task
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEALL, 0);
+                
+                // Wait for device to stabilize (longer delay for reliable recovery)
+                log('Waiting for device to stabilize...', 'info');
+                await sleep(500);
+                
+                updateProgress(85, 'Reconnecting to verify recovery...');
+                
+                // Reconnect to re-initialize the debug session (equivalent to OpenOCD's arp_examine)
+                // This is critical for the device to be properly recovered
+                log('Reconnecting to verify device recovery...', 'info');
+                try {
+                    await dap.reconnect();
+                    log('Reconnected successfully', 'success');
+                } catch (reconnectError) {
+                    log(`Reconnect warning: ${reconnectError.message}`, 'warning');
+                    log('Attempting to continue...', 'info');
+                }
+                
+                // Additional delay after reconnect
+                await sleep(200);
+                
+                updateProgress(90, 'Verifying device accessibility...');
+                
+                // Verify device is accessible by reading CTRL-AP IDR again
+                log('Verifying device accessibility...', 'info');
+                try {
+                    const verifyIdr = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_IDR_REG);
+                    if (verifyIdr !== undefined) {
+                        log(`Post-erase CTRL-AP IDR: 0x${verifyIdr.toString(16).toUpperCase()}`, 'success');
+                    } else {
+                        log('Warning: Could not verify CTRL-AP IDR after erase', 'warning');
+                    }
+                    
+                    // Check ERASEPROTECTSTATUS to verify device is unlocked
+                    const protectStatus = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEPROTECTSTATUS);
+                    let isUnlocked = false;
+                    if (protectStatus !== undefined) {
+                        log(`ERASEPROTECTSTATUS: ${protectStatus}`, 'info');
+                        if (protectStatus >= 1) {
+                            log('Device is unlocked', 'success');
+                            isUnlocked = true;
+                        } else {
+                            log('Warning: Device may still be locked (ERASEPROTECTSTATUS < 1)', 'warning');
+                            log('Waiting additional time and retrying...', 'info');
+                            
+                            // Wait longer and retry
+                            await sleep(500);
+                            await dap.reconnect();
+                            await sleep(200);
+                            
+                            const retryStatus = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEPROTECTSTATUS);
+                            if (retryStatus !== undefined && retryStatus >= 1) {
+                                log(`ERASEPROTECTSTATUS after retry: ${retryStatus}`, 'success');
+                                log('Device is now unlocked', 'success');
+                                isUnlocked = true;
+                            } else {
+                                log('Device still appears locked after retry', 'warning');
+                            }
+                        }
+                    }
+                    
+                    // Store unlock status for caller
+                    dap._isUnlocked = isUnlocked;
+                } catch (verifyError) {
+                    log(`Verification warning: ${verifyError.message}`, 'warning');
+                    log('Device may need manual power cycle', 'warning');
+                    dap._isUnlocked = false;
+                }
+                
+                updateProgress(100, 'Mass erase complete');
+                log('Mass erase completed successfully!', 'success');
+                log('Note: If device appears unresponsive, try power cycling it.', 'info');
+                
+                return dap;
+                
+            } catch (error) {
+                log(`Mass erase error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+        
+        // Parse Intel HEX file
+        function parseIntelHex(hexString) {
+            const lines = hexString.split(/\r?\n/);
+            const data = [];
+            let extendedAddress = 0;
+            let minAddress = Infinity;
+            let maxAddress = 0;
+            
+            for (const line of lines) {
+                if (!line.startsWith(':')) continue;
+                
+                const bytes = [];
+                for (let i = 1; i < line.length; i += 2) {
+                    bytes.push(parseInt(line.substr(i, 2), 16));
+                }
+                
+                const byteCount = bytes[0];
+                const address = (bytes[1] << 8) | bytes[2];
+                const recordType = bytes[3];
+                const recordData = bytes.slice(4, 4 + byteCount);
+                
+                // Verify checksum
+                let checksum = 0;
+                for (let i = 0; i < bytes.length - 1; i++) {
+                    checksum += bytes[i];
+                }
+                checksum = (~checksum + 1) & 0xFF;
+                
+                if (checksum !== bytes[bytes.length - 1]) {
+                    throw new Error(`Checksum error in HEX file at line: ${line}`);
+                }
+                
+                switch (recordType) {
+                    case 0x00: // Data record
+                        const fullAddress = extendedAddress + address;
+                        for (let i = 0; i < recordData.length; i++) {
+                            data.push({ address: fullAddress + i, value: recordData[i] });
+                        }
+                        minAddress = Math.min(minAddress, fullAddress);
+                        maxAddress = Math.max(maxAddress, fullAddress + recordData.length);
+                        break;
+                        
+                    case 0x01: // End of file
+                        break;
+                        
+                    case 0x02: // Extended segment address
+                        extendedAddress = ((recordData[0] << 8) | recordData[1]) << 4;
+                        break;
+                        
+                    case 0x04: // Extended linear address
+                        extendedAddress = ((recordData[0] << 8) | recordData[1]) << 16;
+                        break;
+                        
+                    case 0x03: // Start segment address
+                    case 0x05: // Start linear address
+                        // Ignore start address records
+                        break;
+                        
+                    default:
+                        log(`Unknown record type: ${recordType}`, 'warning');
+                }
+            }
+            
+            if (data.length === 0) {
+                throw new Error('No data found in HEX file');
+            }
+            
+            // Convert to contiguous buffer
+            const size = maxAddress - minAddress;
+            const buffer = new Uint8Array(size);
+            buffer.fill(0xFF); // Fill with 0xFF (erased flash value)
+            
+            for (const { address, value } of data) {
+                buffer[address - minAddress] = value;
+            }
+            
+            return {
+                data: buffer,
+                startAddress: minAddress,
+                size: size
+            };
+        }
+        
+        // Custom memory write function that works around DAP.js transfer() bug
+        // The bug: DAP.js transfer() with array of operations always tries to read
+        // operations.length * 4 bytes from response, even for WRITE operations which
+        // don't return data words. This causes "Offset is outside the bounds of DataView".
+        // Workaround: Add a harmless DP READ (DPIDR) to each batch of writes so the
+        // response contains at least one data word.
+        async function safeWriteMem32(dap, address, value) {
+            // Access the underlying proxy (CmsisDAP) for low-level transfers
+            let proxy = null;
+            const propNames = Object.getOwnPropertyNames(dap);
+            for (const name of propNames) {
+                const prop = dap[name];
+                if (prop && typeof prop === 'object' && typeof prop.transfer === 'function') {
+                    proxy = prop;
+                    break;
+                }
+            }
+            
+            if (!proxy) {
+                throw new Error('Could not find proxy object in ADI instance');
+            }
+            
+            // MEM-AP registers (AP #0)
+            const AP_CSW = 0x00;  // Control/Status Word
+            const AP_TAR = 0x04;  // Transfer Address Register
+            const AP_DRW = 0x0C;  // Data Read/Write
+            const DP_DPIDR = 0x00; // DP Identification Register (for dummy read)
+            
+            // CSW value for 32-bit access with auto-increment disabled
+            const CSW_VALUE = 0x23000052; // SIZE=32bit, AddrInc=OFF, DbgSwEnable, Prot
+            
+            // Select MEM-AP (AP #0) bank 0 for CSW/TAR/DRW
+            const selectValue = 0x00000000; // APSEL=0, APBANKSEL=0
+            
+            // Batch all operations together with a final DP read to avoid DataView bug
+            // The DP read ensures the response contains at least one data word
+            await proxy.transfer([
+                // 1. Write DP.SELECT to select MEM-AP bank 0
+                { port: DAP_PORT_DEBUG, mode: DAP_TRANSFER_WRITE, register: DP_REG_SELECT, value: selectValue },
+                // 2. Write CSW for 32-bit access
+                { port: DAP_PORT_ACCESS, mode: DAP_TRANSFER_WRITE, register: AP_CSW, value: CSW_VALUE },
+                // 3. Write TAR with target address
+                { port: DAP_PORT_ACCESS, mode: DAP_TRANSFER_WRITE, register: AP_TAR, value: address },
+                // 4. Write DRW with data value
+                { port: DAP_PORT_ACCESS, mode: DAP_TRANSFER_WRITE, register: AP_DRW, value: value },
+                // 5. CRITICAL: Add a DP read to make response contain data words
+                // This works around the DAP.js bug where it tries to read N*4 bytes
+                // from response even for WRITE operations
+                { port: DAP_PORT_DEBUG, mode: DAP_TRANSFER_READ, register: DP_DPIDR }
+            ]);
+        }
+        
+        // Flash firmware to device
+        async function flashFirmware(dap, firmwareData, startAddress) {
+            log(`Flashing ${firmwareData.length} bytes starting at 0x${startAddress.toString(16)}...`, 'info');
+            
+            // Convert firmware data to 32-bit words (pad with 0xFF if needed)
+            const paddedSize = Math.ceil(firmwareData.length / 4) * 4;
+            const paddedData = new Uint8Array(paddedSize);
+            paddedData.fill(0xFF); // Fill with 0xFF (erased flash value)
+            paddedData.set(firmwareData);
+            
+            // Create DataView for reading 32-bit words (little-endian)
+            const dataView = new DataView(paddedData.buffer);
+            const totalWords = paddedSize / 4;
+            
+            // Use safeWriteMem32 which works around DAP.js transfer() bug
+            // by adding a DP read to each batch of writes
+            log(`Writing ${totalWords} words using safe memory write...`, 'info');
+            
+            for (let i = 0; i < totalWords; i++) {
+                const address = startAddress + (i * 4);
+                const word = dataView.getUint32(i * 4, true); // little-endian
+                
+                try {
+                    await safeWriteMem32(dap, address, word);
+                } catch (error) {
+                    log(`Error writing word at 0x${address.toString(16)}: ${error.message}`, 'error');
+                    throw error;
+                }
+                
+                // Update progress every 100 words or at the end
+                if ((i + 1) % 100 === 0 || i === totalWords - 1) {
+                    const bytesWritten = (i + 1) * 4;
+                    const progress = 80 + (bytesWritten / paddedSize) * 15;
+                    updateProgress(progress, `Flashing: ${Math.round(bytesWritten / paddedSize * 100)}%`);
+                }
+                
+                // Log progress every 1000 words
+                if ((i + 1) % 1000 === 0 || i === totalWords - 1) {
+                    const bytesWritten = Math.min((i + 1) * 4, firmwareData.length);
+                    log(`Flashed ${bytesWritten} / ${firmwareData.length} bytes`, 'info');
+                }
+            }
+            
+            log('Firmware write completed, verifying...', 'info');
+            
+            // Verify firmware by reading back and comparing
+            updateProgress(95, 'Verifying firmware...');
+            log('Verifying firmware (reading back and comparing)...', 'info');
+            
+            // Verify first 256 bytes (vector table area - critical)
+            const verifySize = Math.min(256, firmwareData.length);
+            try {
+                const readBack = await dap.readBlock(startAddress, verifySize / 4);
+                const readBytes = new Uint8Array(readBack.buffer);
+                
+                let mismatchCount = 0;
+                for (let i = 0; i < verifySize; i++) {
+                    if (readBytes[i] !== firmwareData[i]) {
+                        mismatchCount++;
+                        if (mismatchCount <= 5) {
+                            log(`Verify mismatch at 0x${(startAddress + i).toString(16)}: expected 0x${firmwareData[i].toString(16)}, got 0x${readBytes[i].toString(16)}`, 'warning');
+                        }
+                    }
+                }
+                
+                if (mismatchCount > 0) {
+                    log(`Verification failed: ${mismatchCount} byte mismatches in first ${verifySize} bytes`, 'error');
+                    log('WARNING: Firmware may not have been programmed correctly!', 'error');
+                    log('The device may require NVMC operations for proper flash programming.', 'warning');
+                    throw new Error(`Firmware verification failed: ${mismatchCount} mismatches`);
+                } else {
+                    log(`Verification passed: first ${verifySize} bytes match`, 'success');
+                }
+            } catch (verifyError) {
+                if (verifyError.message.includes('verification failed')) {
+                    throw verifyError;
+                }
+                log(`Verification read error: ${verifyError.message}`, 'warning');
+                log('Could not verify firmware - device may need power cycle', 'warning');
+            }
+            
+            log('Firmware flashing completed!', 'success');
+        }
+        
+        // Load firmware.hex file
+        async function loadFirmware() {
+            try {
+                const response = await fetch('platform-seeedboards/scripts/factory_reset/firmware.hex');
+                if (!response.ok) {
+                    throw new Error(`Failed to load firmware.hex: ${response.status} ${response.statusText}`);
+                }
+                const hexContent = await response.text();
+                return parseIntelHex(hexContent);
+            } catch (error) {
+                throw new Error(`Failed to load firmware: ${error.message}`);
+            }
+        }
+        
+        // Recover Only operation
+        async function recoverOnly() {
+            if (isOperationInProgress) {
+                log('Operation already in progress', 'warning');
+                return;
+            }
+            
+            clearLog();
+            isOperationInProgress = true;
+            setButtonsEnabled(false);
+            showProgress(true);
+            updateProgress(0, 'Starting...');
+            
+            let transport = null;
+            
+            try {
+                log('=== Recover Only Operation ===', 'info');
+                log('This will erase all flash memory on the device.', 'info');
+                
+                updateStatus('Selecting device...', false, true);
+                const device = await selectDevice();
+                currentDevice = device;
+                
+                log(`Device selected: ${device.productName || 'CMSIS-DAP Device'}`, 'success');
+                updateStatus(`Connected: ${device.productName || 'CMSIS-DAP'}`, true, true);
+                
+                // Create WebUSB transport
+                transport = new DAPjs.WebUSB(device);
+                
+                // Perform mass erase
+                const dap = await performMassErase(transport);
+                
+                // Disconnect
+                log('Disconnecting...', 'info');
+                await dap.disconnect();
+                
+                updateStatus('Operation completed', true, false);
+                log('=== Recover Only Completed Successfully ===', 'success');
+                
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                updateStatus('Operation failed', false, false);
+            } finally {
+                isOperationInProgress = false;
+                setButtonsEnabled(true);
+                showProgress(false);
+            }
+        }
+        
+        // Factory Reset operation
+        async function factoryReset() {
+            if (isOperationInProgress) {
+                log('Operation already in progress', 'warning');
+                return;
+            }
+            
+            clearLog();
+            isOperationInProgress = true;
+            setButtonsEnabled(false);
+            showProgress(true);
+            updateProgress(0, 'Starting...');
+            
+            let transport = null;
+            let dap = null;
+            
+            try {
+                log('=== Factory Reset Operation ===', 'info');
+                log('This will erase all flash memory and write factory firmware.', 'info');
+                
+                // Load firmware first
+                log('Loading firmware.hex...', 'info');
+                const firmware = await loadFirmware();
+                log(`Firmware loaded: ${firmware.size} bytes, start address: 0x${firmware.startAddress.toString(16)}`, 'success');
+                
+                updateStatus('Selecting device...', false, true);
+                const device = await selectDevice();
+                currentDevice = device;
+                
+                log(`Device selected: ${device.productName || 'CMSIS-DAP Device'}`, 'success');
+                updateStatus(`Connected: ${device.productName || 'CMSIS-DAP'}`, true, true);
+                
+                // Create WebUSB transport
+                transport = new DAPjs.WebUSB(device);
+                
+                // Perform mass erase
+                dap = await performMassErase(transport);
+                
+                // Check if device is unlocked before proceeding to flash
+                if (dap._isUnlocked === false) {
+                    log('WARNING: Device may still be locked. Firmware flashing may fail.', 'warning');
+                    log('Attempting to flash anyway...', 'info');
+                }
+                
+                // CRITICAL: Create a fresh DAP instance for flashing
+                // The previous DAP instance has its internal DP.SELECT cache pointing to CTRL-AP (AP #2)
+                // after our mass erase operations. DAP.js caches the selectedAddress and may skip
+                // DP.SELECT writes, causing memory operations to go to the wrong AP.
+                // Creating a new instance ensures clean state with MEM-AP (AP #0) selected.
+                log('Creating fresh DAP connection for firmware flashing...', 'info');
+                await dap.disconnect();
+                await sleep(200);
+                
+                // Create new DAP instance with clean state
+                const flashDap = new DAPjs.ADI(transport);
+                await flashDap.connect();
+                log('Connected for flashing', 'success');
+                
+                // Additional delay to ensure device is ready for programming
+                await sleep(200);
+                
+                // Verify MEM-AP is accessible by reading address 0x0 before flashing
+                log('Verifying memory access before flashing...', 'info');
+                try {
+                    const testRead = await flashDap.readMem32(0);
+                    log(`Pre-flash memory read at 0x0: 0x${testRead.toString(16)}`, 'info');
+                    if (testRead === 0xFFFFFFFF) {
+                        log('Memory appears erased (0xFFFFFFFF), ready for programming', 'success');
+                    } else if (testRead === 0) {
+                        log('Warning: Memory read returned 0x0, MEM-AP may not be accessible', 'warning');
+                    }
+                } catch (memError) {
+                    log(`Memory access error: ${memError.message}`, 'warning');
+                    log('Attempting to flash anyway...', 'info');
+                }
+                
+                // Flash firmware
+                updateProgress(80, 'Flashing firmware...');
+                await flashFirmware(flashDap, firmware.data, firmware.startAddress);
+                
+                // Use flashDap for remaining operations
+                dap = flashDap;
+                
+                // Reset device after flashing
+                log('Resetting device...', 'info');
+                await dap.reset();
+                
+                updateProgress(100, 'Factory reset complete');
+                
+                // Disconnect
+                log('Disconnecting...', 'info');
+                await dap.disconnect();
+                
+                updateStatus('Operation completed', true, false);
+                log('=== Factory Reset Completed Successfully ===', 'success');
+                
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                updateStatus('Operation failed', false, false);
+                
+                // Try to disconnect on error
+                if (dap) {
+                    try {
+                        await dap.disconnect();
+                    } catch (e) {
+                        // Ignore disconnect errors
+                    }
+                }
+            } finally {
+                isOperationInProgress = false;
+                setButtonsEnabled(true);
+                showProgress(false);
+            }
+        }
+        
+        // Check WebUSB support on page load
+        window.addEventListener('load', () => {
+            if (!navigator.usb) {
+                log('WebUSB is not supported in this browser.', 'error');
+                log('Please use Chrome, Edge, or another Chromium-based browser.', 'error');
+                setButtonsEnabled(false);
+                updateStatus('WebUSB not supported', false, false);
+            } else {
+                log('WebUSB is supported. Ready to connect.', 'success');
+                log('Click "Recover Only" to erase the device, or "Factory Reset" to erase and flash firmware.', 'info');
+            }
+        });
+    </script>
+</body>
+</html>
