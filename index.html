@@ -654,17 +654,38 @@
                     
                     // Check ERASEPROTECTSTATUS to verify device is unlocked
                     const protectStatus = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEPROTECTSTATUS);
+                    let isUnlocked = false;
                     if (protectStatus !== undefined) {
                         log(`ERASEPROTECTSTATUS: ${protectStatus}`, 'info');
                         if (protectStatus >= 1) {
                             log('Device is unlocked', 'success');
+                            isUnlocked = true;
                         } else {
                             log('Warning: Device may still be locked (ERASEPROTECTSTATUS < 1)', 'warning');
+                            log('Waiting additional time and retrying...', 'info');
+                            
+                            // Wait longer and retry
+                            await sleep(500);
+                            await dap.reconnect();
+                            await sleep(200);
+                            
+                            const retryStatus = await readAPReg(dap, CTRL_AP_NUM, CTRL_AP_ERASEPROTECTSTATUS);
+                            if (retryStatus !== undefined && retryStatus >= 1) {
+                                log(`ERASEPROTECTSTATUS after retry: ${retryStatus}`, 'success');
+                                log('Device is now unlocked', 'success');
+                                isUnlocked = true;
+                            } else {
+                                log('Device still appears locked after retry', 'warning');
+                            }
                         }
                     }
+                    
+                    // Store unlock status for caller
+                    dap._isUnlocked = isUnlocked;
                 } catch (verifyError) {
                     log(`Verification warning: ${verifyError.message}`, 'warning');
                     log('Device may need manual power cycle', 'warning');
+                    dap._isUnlocked = false;
                 }
                 
                 updateProgress(100, 'Mass erase complete');
@@ -776,8 +797,10 @@
                 const blockData = firmwareData.slice(offset, offset + size);
                 
                 // Convert to Uint32Array for writeBlock
+                // IMPORTANT: Pad with 0xFF (erased flash value), not 0x00
                 const paddedSize = Math.ceil(size / 4) * 4;
                 const paddedData = new Uint8Array(paddedSize);
+                paddedData.fill(0xFF); // Fill with 0xFF first
                 paddedData.set(blockData);
                 
                 const words = new Uint32Array(paddedData.buffer);
@@ -789,12 +812,50 @@
                     throw error;
                 }
                 
-                const progress = 80 + ((block + 1) / totalBlocks) * 18;
+                const progress = 80 + ((block + 1) / totalBlocks) * 15;
                 updateProgress(progress, `Flashing: ${Math.round((block + 1) / totalBlocks * 100)}%`);
                 
                 if ((block + 1) % 10 === 0 || block === totalBlocks - 1) {
                     log(`Flashed ${offset + size} / ${firmwareData.length} bytes`, 'info');
                 }
+            }
+            
+            log('Firmware write completed, verifying...', 'info');
+            
+            // Verify firmware by reading back and comparing
+            updateProgress(95, 'Verifying firmware...');
+            log('Verifying firmware (reading back and comparing)...', 'info');
+            
+            // Verify first 256 bytes (vector table area - critical)
+            const verifySize = Math.min(256, firmwareData.length);
+            try {
+                const readBack = await dap.readBlock(startAddress, verifySize / 4);
+                const readBytes = new Uint8Array(readBack.buffer);
+                
+                let mismatchCount = 0;
+                for (let i = 0; i < verifySize; i++) {
+                    if (readBytes[i] !== firmwareData[i]) {
+                        mismatchCount++;
+                        if (mismatchCount <= 5) {
+                            log(`Verify mismatch at 0x${(startAddress + i).toString(16)}: expected 0x${firmwareData[i].toString(16)}, got 0x${readBytes[i].toString(16)}`, 'warning');
+                        }
+                    }
+                }
+                
+                if (mismatchCount > 0) {
+                    log(`Verification failed: ${mismatchCount} byte mismatches in first ${verifySize} bytes`, 'error');
+                    log('WARNING: Firmware may not have been programmed correctly!', 'error');
+                    log('The device may require NVMC operations for proper flash programming.', 'warning');
+                    throw new Error(`Firmware verification failed: ${mismatchCount} mismatches`);
+                } else {
+                    log(`Verification passed: first ${verifySize} bytes match`, 'success');
+                }
+            } catch (verifyError) {
+                if (verifyError.message.includes('verification failed')) {
+                    throw verifyError;
+                }
+                log(`Verification read error: ${verifyError.message}`, 'warning');
+                log('Could not verify firmware - device may need power cycle', 'warning');
             }
             
             log('Firmware flashing completed!', 'success');
@@ -901,9 +962,18 @@
                 // Perform mass erase
                 dap = await performMassErase(transport);
                 
+                // Check if device is unlocked before proceeding to flash
+                if (dap._isUnlocked === false) {
+                    log('WARNING: Device may still be locked. Firmware flashing may fail.', 'warning');
+                    log('Attempting to flash anyway...', 'info');
+                }
+                
                 // Reconnect for flashing (device was reset)
                 log('Reconnecting for firmware flashing...', 'info');
                 await dap.reconnect();
+                
+                // Additional delay to ensure device is ready for programming
+                await sleep(200);
                 
                 // Flash firmware
                 updateProgress(80, 'Flashing firmware...');
