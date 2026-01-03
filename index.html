@@ -626,6 +626,40 @@
             }
         }
         
+        // Reset device via CTRL-AP
+        // This is more reliable than dap.reset() which uses DAP_RESET_TARGET command
+        // that may not be implemented by all CMSIS-DAP probes.
+        // The nRF54L15 reset is controlled via CTRL-AP RESET register (offset 0x000).
+        async function resetDeviceViaCTRLAP(dap) {
+            log('Resetting device via CTRL-AP...', 'info');
+            try {
+                // Assert reset: write 2 to CTRL_AP_RESET
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_RESET, 2);
+                await sleep(10);
+                // Deassert reset: write 0 to CTRL_AP_RESET
+                await writeAPReg(dap, CTRL_AP_NUM, CTRL_AP_RESET, 0);
+                await sleep(100);
+                log('Device reset via CTRL-AP completed', 'success');
+                return true;
+            } catch (error) {
+                log(`CTRL-AP reset error: ${error.message}`, 'warning');
+                // Fall back to DAP_RESET_TARGET as last resort
+                log('Attempting fallback reset via DAP_RESET_TARGET...', 'info');
+                try {
+                    const result = await dap.reset();
+                    if (result) {
+                        log('Fallback reset succeeded (device-specific sequence)', 'success');
+                    } else {
+                        log('Fallback reset sent (no device-specific sequence)', 'warning');
+                    }
+                    return result;
+                } catch (fallbackError) {
+                    log(`Fallback reset also failed: ${fallbackError.message}`, 'error');
+                    return false;
+                }
+            }
+        }
+        
         // Internal function to attempt ERASEALL operation
         // Returns true if successful, false if failed (for fallback retry)
         async function attemptEraseAll(dap, isRetry = false) {
@@ -1280,9 +1314,10 @@
                 // Perform mass erase
                 const dap = await performMassErase(transport);
                 
-                // Reset device after erase
-                log('Resetting device...', 'info');
-                await dap.reset();
+                // Reset device after erase using CTRL-AP
+                // Note: performMassErase() already does a CTRL-AP reset, but we do it again
+                // here to ensure the device is in a clean state after the operation.
+                await resetDeviceViaCTRLAP(dap);
                 
                 // Disconnect
                 log('Disconnecting...', 'info');
@@ -1455,9 +1490,8 @@
                 // Use flashDap for remaining operations
                 dap = flashDap;
                 
-                // Reset device after flashing
-                log('Resetting device...', 'info');
-                await dap.reset();
+                // Reset device after flashing using CTRL-AP
+                await resetDeviceViaCTRLAP(dap);
                 
                 updateProgress(100, 'Factory reset complete');
                 
