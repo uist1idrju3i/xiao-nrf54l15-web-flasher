@@ -12,7 +12,7 @@ This is an **unofficial tool** and is not affiliated with, endorsed by, or suppo
 
 - **Recover Only**: Performs a mass erase using the CTRL-AP (Access Port #2) to unlock protected devices
 - **Factory Reset**: Performs a mass erase followed by flashing the factory firmware (firmware.hex) to restore the device to its original state
-- **OpenBlink XIAO nRF54L15 Firmware Flash**: Performs a mass erase followed by flashing the [OpenBlink firmware](https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense)
+- **OpenBlink XIAO nRF54L15 Firmware Flash**: Performs a mass erase followed by flashing the [OpenBlink XIAO nRF54L15 firmware](https://github.com/uist1idrju3i/openblink_XIAO_nRF54L15_Sense)
 
 ## Verified Environment
 
