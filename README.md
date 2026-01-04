@@ -1,6 +1,6 @@
-# study-DAP.js
+# XIAO nRF54L15 Web Flasher (**Unofficial tool**)
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/uist1idrju3i/study-dapjs)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/uist1idrju3i/xiao-nrf54l15-web-flasher)
 
 A browser-based factory reset and recovery tool for Seeed XIAO nRF54L15. Using WebUSB and CMSIS-DAP, you can recover devices and flash firmware directly from your browser without any installation.
 
@@ -37,7 +37,7 @@ This is an **unofficial tool** and is not affiliated with, endorsed by, or suppo
 To clone the repository and initialize the submodules, run the following commands:
 
 ```console
-$ git clone https://github.com/uist1idrju3i/study-dapjs.git
+$ git clone https://github.com/uist1idrju3i/xiao-nrf54l15-web-flasher.git
 $ git submodule init
 $ git submodule update
 ```
