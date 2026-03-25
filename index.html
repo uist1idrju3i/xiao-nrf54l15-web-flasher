@@ -494,12 +494,13 @@
                 const device = await navigator.usb.requestDevice({
                     filters: [
                         { vendorId: 0x2886 },  // Seeed Technology Co., Ltd.
+                        { vendorId: 0x2e8a },  // Raspberry Pi Foundation
                     ]
                 });
                 return device;
             } catch (error) {
                 if (error.name === 'NotFoundError') {
-                    throw new Error('No device selected. Please select a Seeed CMSIS-DAP device.');
+                    throw new Error('No device selected. Please select a CMSIS-DAP device.');
                 }
                 throw error;
             }
