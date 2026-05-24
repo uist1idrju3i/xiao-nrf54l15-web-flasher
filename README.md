@@ -1,8 +1,10 @@
 # XIAO nRF54L15 Web Flasher (**Unofficial tool**)
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/uist1idrju3i/xiao-nrf54l15-web-flasher)
-
 A browser-based factory reset and recovery tool for Seeed XIAO nRF54L15. Using WebUSB and CMSIS-DAP, you can recover devices and flash firmware directly from your browser without any installation.
+
+## Project Status
+
+This project has ended. For new development and usage, please use the successor project, [FreeOCD WebDebugger](https://github.com/freeocd/freeocd-web).
 
 ## Disclaimer
 
@@ -47,6 +49,7 @@ $ git submodule update
 This project is licensed under the BSD 3-Clause License.
 
 Libraries used:
+
 - [DAP.js](https://github.com/ARMmbed/dapjs) - MIT License
 - [platform-seeedboards](https://github.com/Seeed-Studio/platform-seeedboards/) - Apache License 2.0 (configuration reference)
 
